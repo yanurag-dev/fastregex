@@ -33,7 +33,19 @@ Tested on the Go standard library source (~10,000 files):
 
 ## Install
 
-### Pre-compiled Binaries (Recommended)
+### One-liner (Recommended)
+
+```bash
+curl -fsSL https://yanurag-dev.github.io/GrepTurbo/install.sh | bash
+```
+
+Installs the latest release to `/usr/local/bin/grepturbo`. Override the install directory:
+
+```bash
+INSTALL_DIR=~/.local/bin curl -fsSL https://yanurag-dev.github.io/GrepTurbo/install.sh | bash
+```
+
+### Pre-compiled Binaries
 
 Download the latest binary for your platform from the [Releases](https://github.com/yanurag-dev/GrepTurbo/releases) page.
 
