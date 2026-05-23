@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"grepturbo/internal/agentinit"
 	"grepturbo/internal/index"
 	"grepturbo/internal/query"
 )
@@ -51,7 +52,26 @@ func main() {
 	}
 	searchCmd.Flags().StringVarP(&searchIdx, "index", "i", defaultIndexDir, "index directory to query")
 
-	rootCmd.AddCommand(buildCmd, searchCmd)
+	// init subcommand — wire agent instructions into ~/.claude/
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "Install agent instructions into ~/.claude/ so Claude Code uses grepturbo",
+		Long: `Writes ~/.claude/GrepTurbo.md and adds @GrepTurbo.md to ~/.claude/CLAUDE.md.
+
+After running this, Claude Code will prefer grepturbo search over grep/ripgrep
+for regex searches across the codebase.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			summary, err := agentinit.Setup()
+			if err != nil {
+				return err
+			}
+			fmt.Println(summary)
+			fmt.Println("\nAgent instructions installed. Run 'grepturbo build' in your project, then Claude Code will use grepturbo for searches.")
+			return nil
+		},
+	}
+
+	rootCmd.AddCommand(buildCmd, searchCmd, initCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
