@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO="yanurag-dev/GrepTurbo"
 BINARY="grepturbo"
+ARCHIVE_PREFIX="GrepTurbo"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
 # Detect OS
@@ -40,7 +41,7 @@ if [ -z "$TAG" ]; then
 fi
 
 VERSION="${TAG#v}"
-FILENAME="${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz"
+FILENAME="${ARCHIVE_PREFIX}_${VERSION}_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/${TAG}/${FILENAME}"
 CHECKSUM_URL="https://github.com/${REPO}/releases/download/${TAG}/checksums.txt"
 
