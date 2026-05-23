@@ -2,7 +2,7 @@
 
 <img 
   width="400" 
-  height="400" 
+  height="300" 
   alt="GrepTurbo Logo" 
   src="https://github.com/user-attachments/assets/f820407e-ffa3-4434-b7fc-4f476a9e20c3"
 />
