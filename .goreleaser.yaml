@@ -35,7 +35,9 @@ snapshot:
   name_template: "{{ .Tag }}-next"
 
 changelog:
+  use: git
   sort: asc
+  abbrev: -1
   filters:
     exclude:
       - '^docs:'
