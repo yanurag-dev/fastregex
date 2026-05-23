@@ -29,10 +29,14 @@
 
 Tested on the Go standard library source (~10,000 files):
 
+<div align="center">
+
 | Tool | Time | Files Scanned |
 |---|---|---|
 | `grep -rn` | 2.4 – 3.1s | All 10,000 |
 | `GrepTurbo search` | 0.4 – 0.9s | ~50 candidates |
+
+</div>
 
 **6–7x faster** on 10k files. Grows with codebase size. Repeated queries get faster as the OS caches the mmap'd index in the page cache.
 
