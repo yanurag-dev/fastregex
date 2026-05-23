@@ -14,6 +14,20 @@ import (
 const defaultIndexDir = ".grepturbo"
 
 func main() {
+	// If the first arg isn't a known subcommand or flag, treat it as a search pattern
+	// so `grepturbo <pattern>` works alongside `grepturbo search <pattern>`.
+	knownSubcmds := map[string]bool{"build": true, "search": true, "init": true, "help": true, "completion": true}
+	if len(os.Args) > 1 {
+		first := os.Args[1]
+		if first != "" && first[0] != '-' && !knownSubcmds[first] {
+			// Inject "search" before the pattern
+			newArgs := make([]string, 0, len(os.Args)+1)
+			newArgs = append(newArgs, os.Args[0], "search")
+			newArgs = append(newArgs, os.Args[1:]...)
+			os.Args = newArgs
+		}
+	}
+
 	rootCmd := &cobra.Command{
 		Use:   "grepturbo",
 		Short: "Index-accelerated regex search",
