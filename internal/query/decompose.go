@@ -1,3 +1,25 @@
+// Package query implements regex pattern decomposition and full-pipeline search execution.
+//
+// The search pipeline has four stages:
+//
+// 1. Decompose: Parse the regex pattern and extract required trigrams (3-char sequences).
+// If a file contains a match, it must contain all required trigrams. Patterns with
+// wildcards or character classes cannot be decomposed and fall back to scanning all files.
+//
+// 2. Intersect: Query the index posting lists (baseline + git overlay) for files
+// that contain all required trigrams. This produces a set of candidate files that
+// might match the pattern.
+//
+// 3. Validate: Compile the regex and run it line-by-line against each candidate file.
+// This filters false positives from the trigram-based filtering step.
+//
+// 4. Sync: Before each search, a git-based sync ensures the index includes recently
+// modified and untracked files (overlay), accounts for deleted files (tombstones),
+// and detects if the baseline index is stale (commit drift).
+//
+// The pipeline ensures no false negatives: if a file matches the regex, it will be
+// in the final results. False positives from trigram filtering are eliminated by
+// running the real regex on candidates.
 package query
 
 import (
@@ -14,14 +36,17 @@ type Result struct {
 	Wildcard bool
 }
 
-// Decompose parses pattern and extracts the trigrams that must appear
-// in any file matching the regex.
+// Decompose parses a regex pattern and extracts trigrams that must appear in any matching file.
+// If no useful trigrams can be extracted, it returns Wildcard=true.
 //
-// Rules:
-//   - Literals produce their overlapping trigrams (intersected into the set)
-//   - Alternations (foo|bar) produce the union of each branch's trigrams
-//   - Wildcards (.*, .+, ., [a-z], etc.) force Wildcard=true for that branch
-//   - If any required branch is a wildcard, the whole result is Wildcard=true
+// Trigram extraction rules:
+//   - Literals: all overlapping 3-char sequences (e.g., "func" → ["fun", "unc"])
+//   - Concatenation: union of trigrams from all sub-expressions (all parts must match)
+//   - Alternation (|): union across branches; if any branch is a wildcard, result is a wildcard
+//   - Wildcards (., .*, .+, [a-z], etc.): cannot require specific trigrams
+//
+// The returned Trigrams list filters files before running the regex engine.
+// Wildcard=true means the regex cannot be filtered (scan all files).
 func Decompose(pattern string) (*Result, error) {
 	re, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {

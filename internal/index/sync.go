@@ -1,3 +1,19 @@
+// This file implements git-based incremental index updates (part of the index package).
+//
+// Sync Strategy (Baseline + Overlay):
+// The index starts with a baseline built at a specific git commit. After git operations
+// add, modify, or delete files, Sync() detects these changes and builds an in-memory overlay:
+//
+// - Baseline: the on-disk index (lookup.idx, postings.dat, files.idx) at a known commit
+// - Overlay: in-memory posting lists for modified and untracked files
+// - Tombstones: a set of paths to ignore from the baseline (deleted or superceded by overlay)
+//
+// Search queries intersect baseline and overlay posting lists separately, then union
+// the results. This allows searches to include uncommitted changes without rebuilding
+// the full index.
+//
+// Commit Drift: If the baseline commit differs from HEAD, Sync returns drift=true.
+// The search must be aborted; the user should rebuild the index.
 package index
 
 import (
@@ -12,21 +28,27 @@ import (
 	"grepturbo/internal/trigram"
 )
 
-// GitStatus holds the lists of files that have changed since the baseline.
+// GitStatus categorizes files based on their git status relative to the baseline commit.
 type GitStatus struct {
-	Modified  []string
-	Untracked []string
-	Deleted   []string
+	Modified  []string // files with changes (M) or additions (A) in the index or working tree
+	Untracked []string // files not tracked by git (??)
+	Deleted   []string // files deleted from the index or working tree (D)
 }
 
-// Overlay holds the transient in-memory index of dirty files.
+// Overlay holds an in-memory index of files modified since the baseline was built.
+// It is merged with the baseline during search to include uncommitted changes.
 type Overlay struct {
-	Posts      posting.List
-	Files      []string        // fileID → filepath (starts from len(Baseline.Files))
-	Tombstones map[string]bool // paths that should be ignored from Baseline
+	Posts      posting.List        // in-memory posting lists for dirty files
+	Files      []string            // dirty files (fileID → filepath); IDs start from len(baseline.Files)
+	Tombstones map[string]bool     // baseline paths to hide (deleted or superceded by overlay)
 }
 
-// Sync performs a Git-based synchronization.
+// Sync builds an in-memory overlay of dirty files and detects commit drift.
+//
+// If the repository is clean or git is unavailable, returns an empty overlay with no drift.
+// If committed files have changed since the baseline, returns drift=true (index is stale).
+// Otherwise, indexes modified and untracked files, marks deleted files as tombstones,
+// and returns the overlay for merging with the baseline during search.
 func (r *Reader) Sync() (*Overlay, bool, error) {
 	current, err := CurrentCommit(r.Meta.RootDir)
 	if err != nil {
@@ -86,7 +108,8 @@ func (r *Reader) Sync() (*Overlay, bool, error) {
 	return overlay, false, nil
 }
 
-// GetGitStatus runs 'git status --porcelain' in dir and returns the categorized files.
+// GetGitStatus runs git status --porcelain and categorizes files by their state.
+// Modified and added files are grouped together; untracked files are separate.
 func GetGitStatus(dir string) (*GitStatus, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = dir

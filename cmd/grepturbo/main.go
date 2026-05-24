@@ -1,3 +1,30 @@
+// Package main is the CLI entrypoint for grepturbo.
+//
+// GrepTurbo accelerates regex searches by building a trigram-indexed inverted
+// index over a codebase, then using that index to filter down to candidate
+// files before running the actual regex engine. This reduces query time from
+// seconds (scanning every file) to milliseconds (scanning only candidates).
+//
+// Architecture overview:
+//
+//	regex pattern
+//	   ↓
+//	decompose into required trigrams
+//	   ↓
+//	lookup trigrams in index (mmap'd hash table)
+//	   ↓
+//	intersect posting lists → candidate file IDs
+//	   ↓
+//	run regex engine on candidates only
+//	   ↓
+//	return matches (file:line:text format)
+//
+// The index is built once and persisted to disk in three files:
+//   - lookup.idx: mmap'd fixed-size hash table (trigram → byte offset)
+//   - postings.dat: posting lists (count + file IDs, read on demand)
+//   - files.idx: file ID → file path mapping
+//
+// See docs/ARCHITECTURE.md for full diagrams and design decisions.
 package main
 
 import (
@@ -14,8 +41,10 @@ import (
 const defaultIndexDir = ".grepturbo"
 
 func main() {
-	// If the first arg isn't a known subcommand or flag, treat it as a search pattern
-	// so `grepturbo <pattern>` works alongside `grepturbo search <pattern>`.
+	// shorthand parsing: if the first arg isn't a known subcommand or flag,
+	// treat it as a search pattern so `grepturbo <pattern>` works alongside
+	// `grepturbo search <pattern>`. This improves usability without breaking
+	// explicit subcommand calls.
 	knownSubcmds := map[string]bool{"build": true, "search": true, "init": true, "help": true, "completion": true}
 	if len(os.Args) > 1 {
 		first := os.Args[1]
@@ -41,6 +70,12 @@ func main() {
 	buildCmd := &cobra.Command{
 		Use:   "build",
 		Short: "Walk a directory and build the search index",
+		Long: `Build walks the specified directory tree, extracts trigrams from each file,
+and serializes an inverted index to disk. The index enables O(log n) candidate
+file filtering during queries.
+
+The index is built once and reused for multiple searches. Incremental updates
+via git commit tracking keep the index fresh across edits.`,
 		Example: `  grepturbo build -root ./myproject -out .grepturbo
   grepturbo build -root . --skip node_modules --skip dist`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,6 +92,12 @@ func main() {
 	searchCmd := &cobra.Command{
 		Use:   "search <pattern>",
 		Short: "Query the index with a regex pattern",
+		Long: `Search decomposes a regex pattern into required trigrams, looks them up
+in the index, intersects the posting lists to find candidate files,
+and runs the regex engine only on those candidates.
+
+Output format: file:line:text (compatible with grep -n).
+Exit status 1 if no matches are found (grep convention).`,
 		Example: `  grepturbo search -index .grepturbo 'func.*Error'
   grepturbo search 'TODO'`,
 		Args: cobra.ExactArgs(1),
@@ -70,10 +111,12 @@ func main() {
 	initCmd := &cobra.Command{
 		Use:   "init",
 		Short: "Install agent instructions into ~/.claude/ so Claude Code uses grepturbo",
-		Long: `Writes ~/.claude/GrepTurbo.md and adds @GrepTurbo.md to ~/.claude/CLAUDE.md.
+		Long: `Init writes ~/.claude/GrepTurbo.md and adds @GrepTurbo.md to ~/.claude/CLAUDE.md.
+This configures Claude Code to prefer grepturbo search over grep/ripgrep
+for regex searches across the codebase.
 
-After running this, Claude Code will prefer grepturbo search over grep/ripgrep
-for regex searches across the codebase.`,
+After running this, build the index once with 'grepturbo build' in your project.
+Claude Code will then automatically use grepturbo for all pattern searches.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			summary, err := agentinit.Setup()
 			if err != nil {
@@ -92,6 +135,11 @@ for regex searches across the codebase.`,
 	}
 }
 
+// runBuild orchestrates the index build pipeline:
+// 1. Walk the directory tree
+// 2. Extract trigrams from each file
+// 3. Build in-memory posting lists
+// 4. Serialize to disk (lookup.idx, postings.dat, files.idx)
 func runBuild(root, outDir string, skip []string) error {
 	fmt.Fprintf(os.Stderr, "Building index for %s → %s\n", root, outDir)
 
@@ -111,6 +159,11 @@ func runBuild(root, outDir string, skip []string) error {
 	return nil
 }
 
+// runSearch executes a regex query using the indexed search pipeline:
+// 1. Open the index reader (mmap lookup table)
+// 2. Call query.Search to decompose pattern, intersect posting lists, run regex
+// 3. Handle index drift (commit mismatch) by rebuilding if needed
+// 4. Output matches in grep-compatible format
 func runSearch(idxDir, pattern string) error {
 	r, err := index.NewReader(idxDir)
 	if err != nil {

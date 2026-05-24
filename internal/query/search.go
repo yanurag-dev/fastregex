@@ -10,17 +10,18 @@ import (
 	"grepturbo/internal/posting"
 )
 
-// Match represents a single line match within a file.
+// Match represents a single regex match on a line within a file.
 type Match struct {
-	File string
-	Line int
-	Text string
+	File string // absolute path to the file
+	Line int    // 1-indexed line number
+	Text string // the matched line content
 }
 
-// ErrCommitDrift indicates that the index must be rebuilt.
+// ErrCommitDrift indicates that the index baseline commit differs from the current HEAD.
+// The index must be rebuilt to search the current state of the repository.
 type ErrCommitDrift struct {
-	Baseline string
-	Current  string
+	Baseline string // commit hash when the index was built
+	Current  string // current HEAD commit hash
 }
 
 func (e *ErrCommitDrift) Error() string {
@@ -34,8 +35,17 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
-// Search runs a full regex query against the index.
-// It performs a Git-based sync before searching to ensure results are real-time.
+// Search executes a regex pattern against an index, returning all matching lines.
+//
+// The search pipeline:
+// 1. Sync with Git to include modified/untracked files and hide deleted files
+// 2. Decompose the regex into required trigrams
+// 3. Intersect baseline and overlay posting lists to find candidate files
+// 4. Run the compiled regex against each candidate file
+//
+// Results are guaranteed to have no false negatives: if a file matches the pattern,
+// it will appear in the results.
+// Returns ErrCommitDrift if the index baseline diverges from the current HEAD.
 func Search(r *index.Reader, pattern string) ([]Match, error) {
 	// ── Step 0: Sync with Git (Baseline + Overlay) ──────────────────────────
 	overlay, drift, err := r.Sync()
@@ -141,7 +151,8 @@ func Search(r *index.Reader, pattern string) ([]Match, error) {
 	return matches, nil
 }
 
-// grep scans file at path line by line and returns all lines matching re.
+// grep scans a file line-by-line and returns all lines matching the compiled regex.
+// Returns an error only if the file cannot be read; missing files are silently skipped.
 func grep(re *regexp.Regexp, path string) ([]Match, error) {
 	f, err := os.Open(path)
 	if err != nil {
