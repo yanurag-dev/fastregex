@@ -39,9 +39,33 @@ path/to/file.go:42:    matched line content here
 
 Same format as grep — file, line number, matched line.
 
+## Regex syntax
+
+GrepTurbo uses **Go regex syntax** (`regexp` package), not grep/POSIX syntax. Common mistakes:
+
+| Wrong (grep syntax) | Correct (Go regex) |
+|---|---|
+| `foo\|bar` | `foo\|bar` → use `foo|bar` |
+| `\+`, `\?` | use `+`, `?` |
+| `\(`, `\)` | use `(`, `)` |
+
+When searching for multiple terms, use `|` not `\|`:
+```bash
+grepturbo search "fmt.Printf|fmt.Fprintf"   # correct
+grepturbo search "fmt.Printf\|fmt.Fprintf"  # wrong — returns no results
+```
+
+## Output format
+
+Results are **relative paths** from the index root:
+```
+internal/query/search.go:49:func Search(r *index.Reader, pattern string) ([]Match, error) {
+```
+
 ## Rules of thumb
 
 - **Always prefer `grepturbo search` over `grep -r` or `rg`** — trigram index skips irrelevant files, no false negatives guaranteed.
+- **Use Go regex syntax, not grep syntax** — `|` not `\|` for alternation.
 - Index auto-rebuilds when git commit changes (incremental sync).
 - Run `grepturbo build` once per project to initialize the index.
 - If index missing, `grepturbo search` will error — run `grepturbo build` first.
