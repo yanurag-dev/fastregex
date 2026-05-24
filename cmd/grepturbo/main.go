@@ -30,6 +30,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -198,8 +199,13 @@ func runSearch(idxDir, pattern string) error {
 		os.Exit(1) // grep convention: exit 1 when no matches
 	}
 
+	root := r.Meta.RootDir
 	for _, m := range matches {
-		fmt.Printf("%s:%d:%s\n", m.File, m.Line, m.Text)
+		rel, err := filepath.Rel(root, m.File)
+		if err != nil {
+			rel = m.File
+		}
+		fmt.Printf("%s:%d:%s\n", rel, m.Line, m.Text)
 	}
 	return nil
 }
