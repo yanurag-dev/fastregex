@@ -1,3 +1,25 @@
+// Package index implements the inverted index for regex query acceleration.
+//
+// The index is stored as three files in the index directory:
+//
+//	lookup.idx   — Fixed-size open-addressing hash table mapping trigrams to postings offsets.
+//	             Each slot is 8 bytes: [trigram uint32][offset uint32].
+//	             Load factor ≈ 0.67; slot value of 0 means empty.
+//
+//	postings.dat — Sequential posting list records, indexed by byte offsets in lookup.idx.
+//	             Each record: [count uint32][fileID uint32 ... ].
+//	             Posting lists are always sorted to enable fast intersection.
+//
+//	files.idx    — One filepath per line; line number (0-based) is the fileID.
+//	             Allows decoder to map posting list fileIDs back to paths.
+//
+// The index preserves the no-false-negatives invariant: if a file matches a regex,
+// it will always appear in the candidate set (false positives are acceptable).
+//
+// Query flow: trigram decomposition → hash table lookup → posting list intersection →
+// candidate files → final regex engine run (only on candidates).
+//
+// See Builder for building, Writer for serialization, and Reader for querying.
 package index
 
 import (
@@ -14,24 +36,26 @@ import (
 
 const maxFileSize = 1 << 20 // 1 MB — skip files larger than this
 
-// Builder walks a directory, extracts trigrams from each file,
-// and accumulates an in-memory posting list.
+// Builder walks a directory tree, extracts trigrams from each file,
+// and accumulates an in-memory posting list (trigram → sorted fileID list).
 type Builder struct {
 	Posts   posting.List // trigram → sorted []fileID
 	Files   []string     // fileID → filepath (index == fileID)
-	RootDir string
-	Skip    []string
+	RootDir string       // root directory of indexed tree
+	Skip    []string     // additional directories to skip during walk
 }
 
+// NewBuilder creates a new Builder with empty postings and file list.
 func NewBuilder() *Builder {
 	return &Builder{
 		Posts: make(posting.List),
 	}
 }
 
-// Add indexes a single file. It reads the file content, extracts trigrams,
-// and records the trigram → fileID mapping in the posting list.
-// Returns the fileID assigned to this file, or an error.
+// Add indexes a single file by reading its content, extracting trigrams,
+// and recording the trigram → fileID mappings in the posting list.
+// Binary files (non-UTF-8) and files larger than 1 MB are skipped.
+// Returns the fileID assigned to the file, or 0 if the file was skipped.
 func (b *Builder) Add(path string) (uint32, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -59,6 +83,7 @@ func (b *Builder) Add(path string) (uint32, error) {
 }
 
 // defaultSkipDirs are directories that should never be indexed.
+// These typically contain large, auto-generated, or version control files.
 var defaultSkipDirs = map[string]bool{
 	"node_modules": true,
 	".git":         true,
@@ -75,8 +100,15 @@ type extractResult struct {
 }
 
 // Build walks all files under rootDir and indexes each one concurrently.
-// Directories listed in skip are skipped entirely (e.g. "node_modules").
-// Directories and files that fail to read are silently skipped.
+// It sets b.RootDir and populates b.Files and b.Posts.
+//
+// Directories in defaultSkipDirs or in the skip argument are skipped entirely
+// (e.g., "node_modules", ".git"). Binary files and files larger than 1 MB are
+// also skipped. Errors reading individual files are silently ignored; only
+// fatal walk errors are returned.
+//
+// Concurrency: uses GOMAXPROCS worker goroutines to read and extract trigrams,
+// with a sequential collector to maintain a lock-free builder state.
 func (b *Builder) Build(rootDir string, skip ...string) error {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
