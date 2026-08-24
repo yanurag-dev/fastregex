@@ -1,3 +1,5 @@
+
+
 <div align="center">
 
 <img 
@@ -76,7 +78,7 @@ grepturbo <pattern>
 grepturbo init
 ```
 
-This sets up GrepTurbo integration so your editor can run searches. Creates `.grepturbo/` in the project root.
+This sets up GrepTurbo integration so your editor can run searches. It installs agent instructions into `~/.claude/`.
 
 **Step 2 — build the index** (once per project, or when files change):
 
